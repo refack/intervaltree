@@ -1,0 +1,79 @@
+[build-system]
+requires = ["uv_build>=0.8.24,<0.9.0"]
+build-backend = "uv_build"
+
+[project]
+name = "intervaltree"
+version = "3.2.0"
+requires-python = ">=3.10"
+description = "Editable interval tree data structure for Python 2 and 3"
+readme = { file = "README.md", content-type = "text/markdown" }
+license-files = ['LICENSE.txt']
+authors = [
+    { name = "Chaim Leib Halbert", email = "chaim.leib.halbert@gmail.com" },
+    { name = "Konstantin Tretyakov" }
+]
+keywords = ["interval-tree", "data-structure", "intervals", "tree"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Programming Language :: Python :: Implementation :: PyPy",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+    "Topic :: Scientific/Engineering :: Information Analysis",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Text Processing :: General",
+    "Topic :: Text Processing :: Linguistic",
+    "Topic :: Text Processing :: Markup",
+]
+dependencies = ['sortedcontainers < 3']
+
+[project.optional-dependencies]
+test = [
+    'pytest',
+    'iniconfig',
+    'setuptools',
+    'contextlib2',
+    'configparser',
+    'zipp',
+    'pyparsing',
+    'attrs',
+    'importlib_metadata',
+    'packaging',
+    'pytest',
+    'pytest-cov',
+    'coverage',
+]
+
+
+[project.urls]
+Homepage = 'https://github.com/chaimleib/intervaltree'
+Download = 'https://github.com/chaimleib/intervaltree/tarball/3.2.0'
+Issues = 'https://github.com/chaimleib/intervaltree/issues'
+
+[tool.pytest.ini_options]
+addopts = '--doctest-modules --doctest-glob=README.md --ignore=setup.py --ignore=*.pyc'
+norecursedirs = '*.egg* *doc* .* _* htmlcov scripts dist bin test/data'
+
+[tool.bdist_wheel]
+universal = true
+
+[tool.uv.build-backend]
+module-name = "intervaltree"
+module-root = ""
+
+[tool.setuptools]
+zip-safe = true
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ['intervaltree*']
+
