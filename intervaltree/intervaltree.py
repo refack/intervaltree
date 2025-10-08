@@ -30,216 +30,18 @@ from copy import copy
 from warnings import warn
 
 try:
-    from collections.abc import MutableSet  # Python 3?
+    from collections.abc import MutableSet
 except ImportError:
     from collections import MutableSet
 
-try:
-    xrange  # Python 2?
-except NameError:  # pragma: no cover
-    xrange = range
+import cython
 
-
-# noinspection PyBroadException
+@cython.cclass
 class IntervalTree(MutableSet):
-    """
-    A binary lookup tree of intervals.
-    The intervals contained in the tree are represented using ``Interval(a, b, data)`` objects.
-    Each such object represents a half-open interval ``[a, b)`` with optional data.
+    all_intervals = cython.declare(set)
+    top_node = cython.declare(object)
+    boundary_table = cython.declare(object)
 
-    Examples:
-    ---------
-
-    Initialize a blank tree::
-
-        >>> tree = IntervalTree()
-        >>> tree
-        IntervalTree()
-
-    Initialize a tree from an iterable set of Intervals in O(n * log n)::
-
-        >>> tree = IntervalTree([Interval(-10, 10), Interval(-20.0, -10.0)])
-        >>> tree
-        IntervalTree([Interval(-20.0, -10.0), Interval(-10, 10)])
-        >>> len(tree)
-        2
-
-    Note that this is a set, i.e. repeated intervals are ignored. However,
-    Intervals with different data fields are regarded as different::
-
-        >>> tree = IntervalTree([Interval(-10, 10), Interval(-10, 10), Interval(-10, 10, "x")])
-        >>> tree
-        IntervalTree([Interval(-10, 10), Interval(-10, 10, 'x')])
-        >>> len(tree)
-        2
-
-    Insertions::
-        >>> tree = IntervalTree()
-        >>> tree[0:1] = "data"
-        >>> tree.add(Interval(10, 20))
-        >>> tree.addi(19.9, 20)
-        >>> tree
-        IntervalTree([Interval(0, 1, 'data'), Interval(10, 20), Interval(19.9, 20)])
-        >>> tree.update([Interval(19.9, 20.1), Interval(20.1, 30)])
-        >>> len(tree)
-        5
-
-        Inserting the same Interval twice does nothing::
-            >>> tree = IntervalTree()
-            >>> tree[-10:20] = "arbitrary data"
-            >>> tree[-10:20] = None  # Note that this is also an insertion
-            >>> tree
-            IntervalTree([Interval(-10, 20), Interval(-10, 20, 'arbitrary data')])
-            >>> tree[-10:20] = None  # This won't change anything
-            >>> tree[-10:20] = "arbitrary data" # Neither will this
-            >>> len(tree)
-            2
-
-    Deletions::
-        >>> tree = IntervalTree(Interval(b, e) for b, e in [(-10, 10), (-20, -10), (10, 20)])
-        >>> tree
-        IntervalTree([Interval(-20, -10), Interval(-10, 10), Interval(10, 20)])
-        >>> tree.remove(Interval(-10, 10))
-        >>> tree
-        IntervalTree([Interval(-20, -10), Interval(10, 20)])
-        >>> tree.remove(Interval(-10, 10))
-        Traceback (most recent call last):
-        ...
-        ValueError
-        >>> tree.discard(Interval(-10, 10))  # Same as remove, but no exception on failure
-        >>> tree
-        IntervalTree([Interval(-20, -10), Interval(10, 20)])
-
-    Delete intervals, overlapping a given point::
-
-        >>> tree = IntervalTree([Interval(-1.1, 1.1), Interval(-0.5, 1.5), Interval(0.5, 1.7)])
-        >>> tree.remove_overlap(1.1)
-        >>> tree
-        IntervalTree([Interval(-1.1, 1.1)])
-
-    Delete intervals, overlapping an interval::
-
-        >>> tree = IntervalTree([Interval(-1.1, 1.1), Interval(-0.5, 1.5), Interval(0.5, 1.7)])
-        >>> tree.remove_overlap(0, 0.5)
-        >>> tree
-        IntervalTree([Interval(0.5, 1.7)])
-        >>> tree.remove_overlap(1.7, 1.8)
-        >>> tree
-        IntervalTree([Interval(0.5, 1.7)])
-        >>> tree.remove_overlap(1.6, 1.6)  # Null interval does nothing
-        >>> tree
-        IntervalTree([Interval(0.5, 1.7)])
-        >>> tree.remove_overlap(1.6, 1.5)  # Ditto
-        >>> tree
-        IntervalTree([Interval(0.5, 1.7)])
-
-    Delete intervals, enveloped in the range::
-
-        >>> tree = IntervalTree([Interval(-1.1, 1.1), Interval(-0.5, 1.5), Interval(0.5, 1.7)])
-        >>> tree.remove_envelop(-1.0, 1.5)
-        >>> tree
-        IntervalTree([Interval(-1.1, 1.1), Interval(0.5, 1.7)])
-        >>> tree.remove_envelop(-1.1, 1.5)
-        >>> tree
-        IntervalTree([Interval(0.5, 1.7)])
-        >>> tree.remove_envelop(0.5, 1.5)
-        >>> tree
-        IntervalTree([Interval(0.5, 1.7)])
-        >>> tree.remove_envelop(0.5, 1.7)
-        >>> tree
-        IntervalTree()
-
-    Point queries::
-
-        >>> tree = IntervalTree([Interval(-1.1, 1.1), Interval(-0.5, 1.5), Interval(0.5, 1.7)])
-        >>> assert tree[-1.1]   == set([Interval(-1.1, 1.1)])
-        >>> assert tree.at(1.1) == set([Interval(-0.5, 1.5), Interval(0.5, 1.7)])   # Same as tree[1.1]
-        >>> assert tree.at(1.5) == set([Interval(0.5, 1.7)])                        # Same as tree[1.5]
-
-    Interval overlap queries
-
-        >>> tree = IntervalTree([Interval(-1.1, 1.1), Interval(-0.5, 1.5), Interval(0.5, 1.7)])
-        >>> assert tree.overlap(1.7, 1.8) == set()
-        >>> assert tree.overlap(1.5, 1.8) == set([Interval(0.5, 1.7)])
-        >>> assert tree[1.5:1.8] == set([Interval(0.5, 1.7)])                       # same as previous
-        >>> assert tree.overlap(1.1, 1.8) == set([Interval(-0.5, 1.5), Interval(0.5, 1.7)])
-        >>> assert tree[1.1:1.8] == set([Interval(-0.5, 1.5), Interval(0.5, 1.7)])  # same as previous
-
-    Interval envelop queries::
-
-        >>> tree = IntervalTree([Interval(-1.1, 1.1), Interval(-0.5, 1.5), Interval(0.5, 1.7)])
-        >>> assert tree.envelop(-0.5, 0.5) == set()
-        >>> assert tree.envelop(-0.5, 1.5) == set([Interval(-0.5, 1.5)])
-
-    Membership queries::
-
-        >>> tree = IntervalTree([Interval(-1.1, 1.1), Interval(-0.5, 1.5), Interval(0.5, 1.7)])
-        >>> Interval(-0.5, 0.5) in tree
-        False
-        >>> Interval(-1.1, 1.1) in tree
-        True
-        >>> Interval(-1.1, 1.1, "x") in tree
-        False
-        >>> tree.overlaps(-1.1)
-        True
-        >>> tree.overlaps(1.7)
-        False
-        >>> tree.overlaps(1.7, 1.8)
-        False
-        >>> tree.overlaps(-1.2, -1.1)
-        False
-        >>> tree.overlaps(-1.2, -1.0)
-        True
-
-    Sizing::
-
-        >>> tree = IntervalTree([Interval(-1.1, 1.1), Interval(-0.5, 1.5), Interval(0.5, 1.7)])
-        >>> len(tree)
-        3
-        >>> tree.is_empty()
-        False
-        >>> IntervalTree().is_empty()
-        True
-        >>> not tree
-        False
-        >>> not IntervalTree()
-        True
-        >>> print(tree.begin())    # using print() because of floats in Python 2.6
-        -1.1
-        >>> print(tree.end())      # ditto
-        1.7
-
-    Iteration::
-
-        >>> tree = IntervalTree([Interval(-11, 11), Interval(-5, 15), Interval(5, 17)])
-        >>> [iv.begin for iv in sorted(tree)]
-        [-11, -5, 5]
-        >>> assert tree.items() == set([Interval(-5, 15), Interval(-11, 11), Interval(5, 17)])
-
-    Copy- and typecasting, pickling::
-
-        >>> tree0 = IntervalTree([Interval(0, 1, "x"), Interval(1, 2, ["x"])])
-        >>> tree1 = IntervalTree(tree0)  # Shares Interval objects
-        >>> tree2 = tree0.copy()         # Shallow copy (same as above, as Intervals are singletons)
-        >>> import pickle
-        >>> tree3 = pickle.loads(pickle.dumps(tree0))  # Deep copy
-        >>> list(tree0[1])[0].data[0] = "y"  # affects shallow copies, but not deep copies
-        >>> tree0
-        IntervalTree([Interval(0, 1, 'x'), Interval(1, 2, ['y'])])
-        >>> tree1
-        IntervalTree([Interval(0, 1, 'x'), Interval(1, 2, ['y'])])
-        >>> tree2
-        IntervalTree([Interval(0, 1, 'x'), Interval(1, 2, ['y'])])
-        >>> tree3
-        IntervalTree([Interval(0, 1, 'x'), Interval(1, 2, ['x'])])
-
-    Equality testing::
-
-        >>> IntervalTree([Interval(0, 1)]) == IntervalTree([Interval(0, 1)])
-        True
-        >>> IntervalTree([Interval(0, 1)]) == IntervalTree([Interval(0, 1, "x")])
-        False
-    """
     @classmethod
     def from_tuples(cls, tups):
         """
@@ -269,6 +71,7 @@ class IntervalTree(MutableSet):
         for iv in self.all_intervals:
             self._add_boundaries(iv)
 
+    @cython.ccall
     def copy(self):
         """
         Construct a new IntervalTree using shallow copies of the
@@ -311,6 +114,7 @@ class IntervalTree(MutableSet):
         else:
             self.boundary_table[end] -= 1
 
+    @cython.ccall
     def add(self, interval):
         """
         Adds an interval to the tree, if not already present.
@@ -334,6 +138,7 @@ class IntervalTree(MutableSet):
         self._add_boundaries(interval)
     append = add
 
+    @cython.ccall
     def addi(self, begin, end, data=None):
         """
         Shortcut for add(Interval(begin, end, data)).
@@ -343,6 +148,7 @@ class IntervalTree(MutableSet):
         return self.add(Interval(begin, end, data))
     appendi = addi
 
+    @cython.ccall
     def update(self, intervals):
         """
         Given an iterable of intervals, add them to the tree.
@@ -353,6 +159,7 @@ class IntervalTree(MutableSet):
         for iv in intervals:
             self.add(iv)
 
+    @cython.ccall
     def remove(self, interval):
         """
         Removes an interval from the tree, if present. If not, raises
@@ -360,15 +167,13 @@ class IntervalTree(MutableSet):
 
         Completes in O(log n) time.
         """
-        #self.verify()
         if interval not in self:
-            #print(self.all_intervals)
             raise ValueError
         self.top_node = self.top_node.remove(interval)
         self.all_intervals.remove(interval)
         self._remove_boundaries(interval)
-        #self.verify()
 
+    @cython.ccall
     def removei(self, begin, end, data=None):
         """
         Shortcut for remove(Interval(begin, end, data)).
@@ -377,6 +182,7 @@ class IntervalTree(MutableSet):
         """
         return self.remove(Interval(begin, end, data))
 
+    @cython.ccall
     def discard(self, interval):
         """
         Removes an interval from the tree, if present. If not, does
@@ -390,6 +196,7 @@ class IntervalTree(MutableSet):
         self.top_node = self.top_node.discard(interval)
         self._remove_boundaries(interval)
 
+    @cython.ccall
     def discardi(self, begin, end, data=None):
         """
         Shortcut for discard(Interval(begin, end, data)).
@@ -416,6 +223,7 @@ class IntervalTree(MutableSet):
         for iv in other:
             self.discard(iv)
 
+    @cython.ccall
     def union(self, other):
         """
         Returns a new tree, comprising all intervals from self
@@ -467,6 +275,7 @@ class IntervalTree(MutableSet):
                 other.remove(iv)
         self.update(other)
 
+    @cython.ccall
     def remove_overlap(self, begin, end=None):
         """
         Removes all intervals overlapping the given point or range.
@@ -480,6 +289,7 @@ class IntervalTree(MutableSet):
         for iv in hitlist:
             self.remove(iv)
 
+    @cython.ccall
     def remove_envelop(self, begin, end):
         """
         Removes all intervals completely enveloped in the given range.
@@ -493,6 +303,7 @@ class IntervalTree(MutableSet):
         for iv in hitlist:
             self.remove(iv)
 
+    @cython.ccall
     def chop(self, begin, end, datafunc=None):
         """
         Like remove_envelop(), but trims back Intervals hanging into
@@ -518,6 +329,7 @@ class IntervalTree(MutableSet):
         self.difference_update(end_hits)
         self.update(insertions)
 
+    @cython.ccall
     def slice(self, point, datafunc=None):
         """
         Split Intervals that overlap point into two new Intervals. if
@@ -540,6 +352,7 @@ class IntervalTree(MutableSet):
         self.difference_update(hitlist)
         self.update(insertions)
 
+    @cython.ccall
     def clear(self):
         """
         Empties the tree.
@@ -548,6 +361,7 @@ class IntervalTree(MutableSet):
         """
         self.__init__()
 
+    @cython.ccall
     def find_nested(self):
         """
         Returns a dictionary mapping parent intervals to sets of
@@ -570,6 +384,7 @@ class IntervalTree(MutableSet):
                 add_if_nested()
         return result
 
+    @cython.ccall
     def overlaps(self, begin, end=None):
         """
         Returns whether some interval in the tree overlaps the given
@@ -586,6 +401,7 @@ class IntervalTree(MutableSet):
         else:
             return self.overlaps_range(begin.begin, begin.end)
 
+    @cython.ccall
     def overlaps_point(self, p):
         """
         Returns whether some interval in the tree overlaps p.
@@ -597,6 +413,7 @@ class IntervalTree(MutableSet):
             return False
         return bool(self.top_node.contains_point(p))
 
+    @cython.ccall
     def overlaps_range(self, begin, end):
         """
         Returns whether some interval in the tree overlaps the given
@@ -619,6 +436,7 @@ class IntervalTree(MutableSet):
             if begin < bound < end
         )
 
+    @cython.ccall
     def split_overlaps(self):
         """
         Finds all intervals with overlapping ranges and splits them
@@ -633,7 +451,7 @@ class IntervalTree(MutableSet):
         if len(self.boundary_table) == 2:
             return
 
-        bounds = sorted(self.boundary_table)  # get bound locations
+        bounds = sorted(self.boundary_table)
 
         new_ivs = set()
         for lbound, ubound in zip(bounds[:-1], bounds[1:]):
@@ -642,190 +460,114 @@ class IntervalTree(MutableSet):
 
         self.__init__(new_ivs)
 
+    @cython.ccall
     def merge_overlaps(self, data_reducer=None, data_initializer=None, strict=True):
         """
         Finds all intervals with overlapping ranges and merges them
-        into a single interval. If provided, uses data_reducer and
-        data_initializer with similar semantics to Python's built-in
-        reduce(reducer_func[, initializer]), as follows:
-
-        If data_reducer is set to a function, combines the data
-        fields of the Intervals with
-            current_reduced_data = data_reducer(current_reduced_data, new_data)
-        If data_reducer is None, the merged Interval's data
-        field will be set to None, ignoring all the data fields
-        of the merged Intervals.
-
-        On encountering the first Interval to merge, if
-        data_initializer is None (default), uses the first
-        Interval's data field as the first value for
-        current_reduced_data. If data_initializer is not None,
-        current_reduced_data is set to a shallow copy of
-        data_initializer created with copy.copy(data_initializer).
-
-        If strict is True (default), intervals are only merged if
-        their ranges actually overlap; adjacent, touching intervals
-        will not be merged. If strict is False, intervals are merged
-        even if they are only end-to-end adjacent.
-
-        Completes in O(n*logn) time.
+        into a single interval.
         """
         if not self:
             return
 
-        sorted_intervals = sorted(self.all_intervals)  # get sorted intervals
+        sorted_intervals = sorted(self.all_intervals)
         merged = []
-        # use mutable object to allow new_series() to modify it
         current_reduced = [None]
-        higher = None  # iterating variable, which new_series() needs access to
+        higher = None
 
         def new_series():
             if data_initializer is None:
                 current_reduced[0] = higher.data
                 merged.append(higher)
-                return
-            else:  # data_initializer is not None
+            else:
                 current_reduced[0] = copy(data_initializer)
                 current_reduced[0] = data_reducer(current_reduced[0], higher.data)
                 merged.append(Interval(higher.begin, higher.end, current_reduced[0]))
 
         for higher in sorted_intervals:
-            if merged:  # series already begun
+            if merged:
                 lower = merged[-1]
                 if (higher.begin < lower.end or
-                    not strict and higher.begin == lower.end):  # should merge
+                    not strict and higher.begin == lower.end):
                     upper_bound = max(lower.end, higher.end)
                     if data_reducer is not None:
                         current_reduced[0] = data_reducer(current_reduced[0], higher.data)
-                    else:  # annihilate the data, since we don't know how to merge it
+                    else:
                         current_reduced[0] = None
                     merged[-1] = Interval(lower.begin, upper_bound, current_reduced[0])
                 else:
                     new_series()
-            else:  # not merged; is first of Intervals to merge
+            else:
                 new_series()
 
         self.__init__(merged)
 
+    @cython.ccall
     def merge_equals(self, data_reducer=None, data_initializer=None):
         """
         Finds all intervals with equal ranges and merges them
-        into a single interval. If provided, uses data_reducer and
-        data_initializer with similar semantics to Python's built-in
-        reduce(reducer_func[, initializer]), as follows:
-
-        If data_reducer is set to a function, combines the data
-        fields of the Intervals with
-            current_reduced_data = data_reducer(current_reduced_data, new_data)
-        If data_reducer is None, the merged Interval's data
-        field will be set to None, ignoring all the data fields
-        of the merged Intervals.
-
-        On encountering the first Interval to merge, if
-        data_initializer is None (default), uses the first
-        Interval's data field as the first value for
-        current_reduced_data. If data_initializer is not None,
-        current_reduced_data is set to a shallow copy of
-        data_initiazer created with
-            copy.copy(data_initializer).
-
-        Completes in O(n*logn) time.
+        into a single interval.
         """
         if not self:
             return
 
-        sorted_intervals = sorted(self.all_intervals)  # get sorted intervals
+        sorted_intervals = sorted(self.all_intervals)
         merged = []
-        # use mutable object to allow new_series() to modify it
         current_reduced = [None]
-        higher = None  # iterating variable, which new_series() needs access to
+        higher = None
 
         def new_series():
             if data_initializer is None:
                 current_reduced[0] = higher.data
                 merged.append(higher)
-                return
-            else:  # data_initializer is not None
+            else:
                 current_reduced[0] = copy(data_initializer)
                 current_reduced[0] = data_reducer(current_reduced[0], higher.data)
                 merged.append(Interval(higher.begin, higher.end, current_reduced[0]))
 
         for higher in sorted_intervals:
-            if merged:  # series already begun
+            if merged:
                 lower = merged[-1]
-                if higher.range_matches(lower):  # should merge
+                if higher.range_matches(lower):
                     upper_bound = max(lower.end, higher.end)
                     if data_reducer is not None:
                         current_reduced[0] = data_reducer(current_reduced[0], higher.data)
-                    else:  # annihilate the data, since we don't know how to merge it
+                    else:
                         current_reduced[0] = None
                     merged[-1] = Interval(lower.begin, upper_bound, current_reduced[0])
                 else:
                     new_series()
-            else:  # not merged; is first of Intervals to merge
+            else:
                 new_series()
 
         self.__init__(merged)
 
-    def merge_neighbors(
-        self,
-        data_reducer=None,
-        data_initializer=None,
-        distance=1,
-        strict=True,
-    ):
+    @cython.ccall
+    def merge_neighbors(self, data_reducer=None, data_initializer=None, distance=1, strict=True):
         """
-        Finds all adjacent intervals with range terminals less than or equal to
-        the given distance and merges them into a single interval. If provided,
-        uses data_reducer and data_initializer with similar semantics to
-        Python's built-in reduce(reducer_func[, initializer]), as follows:
-
-        If data_reducer is set to a function, combines the data
-        fields of the Intervals with
-            current_reduced_data = data_reducer(current_reduced_data, new_data)
-        If data_reducer is None, the merged Interval's data
-        field will be set to None, ignoring all the data fields
-        of the merged Intervals.
-
-        On encountering the first Interval to merge, if
-        data_initializer is None (default), uses the first
-        Interval's data field as the first value for
-        current_reduced_data. If data_initializer is not None,
-        current_reduced_data is set to a shallow copy of
-        data_initiazer created with
-            copy.copy(data_initializer).
-
-        If strict is True (default), only discrete intervals are merged if
-        their ranges are within the given distance; overlapping intervals
-        will not be merged. If strict is False, both neighbors and overlapping
-        intervals are merged.
-
-        Completes in O(n*logn) time.
+        Merges neighboring intervals.
         """
         if not self:
             return
 
-        sorted_intervals = sorted(self.all_intervals)  # get sorted intervals
+        sorted_intervals = sorted(self.all_intervals)
         merged = []
-        # use mutable object to allow new_series() to modify it
         current_reduced = [None]
-        higher = None  # iterating variable, which new_series() needs access to
+        higher = None
 
         def new_series():
             if data_initializer is None:
                 current_reduced[0] = higher.data
                 merged.append(higher)
-                return
-            else:  # data_initializer is not None
+            else:
                 current_reduced[0] = copy(data_initializer)
                 current_reduced[0] = data_reducer(current_reduced[0], higher.data)
                 merged.append(Interval(higher.begin, higher.end, current_reduced[0]))
 
         for higher in sorted_intervals:
-            if merged:  # series already begun
+            if merged:
                 lower = merged[-1]
                 margin = higher.begin - lower.end
-                if margin <= distance:  # should merge
+                if margin <= distance:
                     if strict and margin < 0:
                         new_series()
                         continue
@@ -833,16 +575,17 @@ class IntervalTree(MutableSet):
                         upper_bound = max(lower.end, higher.end)
                         if data_reducer is not None:
                             current_reduced[0] = data_reducer(current_reduced[0], higher.data)
-                        else:  # annihilate the data, since we don't know how to merge it
+                        else:
                             current_reduced[0] = None
                         merged[-1] = Interval(lower.begin, upper_bound, current_reduced[0])
                 else:
                     new_series()
-            else:  # not merged; is first of Intervals to merge
+            else:
                 new_series()
 
         self.__init__(merged)
 
+    @cython.ccall
     def items(self):
         """
         Constructs and returns a set of all intervals in the tree.
@@ -852,6 +595,7 @@ class IntervalTree(MutableSet):
         """
         return set(self.all_intervals)
 
+    @cython.ccall
     def is_empty(self):
         """
         Returns whether the tree is empty.
@@ -861,6 +605,7 @@ class IntervalTree(MutableSet):
         """
         return 0 == len(self)
 
+    @cython.ccall
     def at(self, p):
         """
         Returns the set of all intervals that contain p.
@@ -875,16 +620,11 @@ class IntervalTree(MutableSet):
             return set()
         return root.search_point(p, set())
 
+    @cython.ccall
     def envelop(self, begin, end=None):
         """
         Returns the set of all intervals fully contained in the range
         [begin, end).
-
-        Completes in O(m + k*log n) time, where:
-          * n = size of the tree
-          * m = number of matches
-          * k = size of the search range
-        :rtype: set of Interval
         """
         root = self.top_node
         if not root:
@@ -894,31 +634,23 @@ class IntervalTree(MutableSet):
             return self.envelop(iv.begin, iv.end)
         elif begin >= end:
             return set()
-        result = root.search_point(begin, set()) # bound_begin might be greater
+        result = root.search_point(begin, set())
         boundary_table = self.boundary_table
         bound_begin = boundary_table.bisect_left(begin)
-        bound_end = boundary_table.bisect_left(end)  # up to, but not including end
+        bound_end = boundary_table.bisect_left(end)
         result.update(root.search_overlap(
-            # slice notation is slightly slower
-            boundary_table.keys()[index] for index in xrange(bound_begin, bound_end)
+            boundary_table.keys()[index] for index in range(bound_begin, bound_end)
         ))
-
-        # TODO: improve envelop() to use node info instead of less-efficient filtering
         result = set(
             iv for iv in result
             if iv.begin >= begin and iv.end <= end
         )
         return result
 
+    @cython.ccall
     def overlap(self, begin, end=None):
         """
         Returns a set of all intervals overlapping the given range.
-
-        Completes in O(m + k*log n) time, where:
-          * n = size of the tree
-          * m = number of matches
-          * k = size of the search range
-        :rtype: set of Interval
         """
         root = self.top_node
         if not root:
@@ -928,16 +660,16 @@ class IntervalTree(MutableSet):
             return self.overlap(iv.begin, iv.end)
         elif begin >= end:
             return set()
-        result = root.search_point(begin, set())  # bound_begin might be greater
+        result = root.search_point(begin, set())
         boundary_table = self.boundary_table
         bound_begin = boundary_table.bisect_left(begin)
-        bound_end = boundary_table.bisect_left(end)  # up to, but not including end
+        bound_end = boundary_table.bisect_left(end)
         result.update(root.search_overlap(
-            # slice notation is slightly slower
-            boundary_table.keys()[index] for index in xrange(bound_begin, bound_end)
+            boundary_table.keys()[index] for index in range(bound_begin, bound_end)
         ))
         return result
 
+    @cython.ccall
     def begin(self):
         """
         Returns the lower bound of the first interval in the tree.
@@ -948,6 +680,7 @@ class IntervalTree(MutableSet):
             return 0
         return self.boundary_table.keys()[0]
 
+    @cython.ccall
     def end(self):
         """
         Returns the upper bound of the last interval in the tree.
@@ -958,31 +691,28 @@ class IntervalTree(MutableSet):
             return 0
         return self.boundary_table.keys()[-1]
 
+    @cython.ccall
     def range(self):
         """
         Returns a minimum-spanning Interval that encloses all the
-        members of this IntervalTree. If the tree is empty, returns
-        null Interval.
-        :rtype: Interval
+        members of this IntervalTree.
         """
         return Interval(self.begin(), self.end())
 
+    @cython.ccall
     def span(self):
         """
         Returns the length of the minimum-spanning Interval that
-        encloses all the members of this IntervalTree. If the tree
-        is empty, return 0.
+        encloses all the members of this IntervalTree.
         """
         if not self:
             return 0
         return self.end() - self.begin()
 
+    @cython.ccall
     def print_structure(self, tostring=False):
         """
         ## FOR DEBUGGING ONLY ##
-        Pretty-prints the structure of the tree.
-        If tostring is true, prints nothing and returns a string.
-        :rtype: None or str
         """
         if self.top_node:
             return self.top_node.print_structure(tostring=tostring)
@@ -993,45 +723,29 @@ class IntervalTree(MutableSet):
             else:
                 return result
 
+    @cython.ccall
     def verify(self):
         """
         ## FOR DEBUGGING ONLY ##
-        Checks the table to ensure that the invariants are held.
         """
         if self.all_intervals:
-            ## top_node.all_children() == self.all_intervals
             try:
                 assert self.top_node.all_children() == self.all_intervals
             except AssertionError as e:
+                from pprint import pprint
                 print(
                     'Error: the tree and the membership set are out of sync!'
                 )
                 tivs = set(self.top_node.all_children())
                 print('top_node.all_children() - all_intervals:')
-                try:
-                    pprint
-                except NameError:
-                    from pprint import pprint
                 pprint(tivs - self.all_intervals)
                 print('all_intervals - top_node.all_children():')
                 pprint(self.all_intervals - tivs)
                 raise e
-
-            ## All members are Intervals
             for iv in self:
-                assert isinstance(iv, Interval), (
-                    "Error: Only Interval objects allowed in IntervalTree:"
-                    " {0}".format(iv)
-                )
-
-            ## No null intervals
+                assert isinstance(iv, Interval)
             for iv in self:
-                assert not iv.is_null(), (
-                    "Error: Null Interval objects not allowed in IntervalTree:"
-                    " {0}".format(iv)
-                )
-
-            ## Reconstruct boundary_table
+                assert not iv.is_null()
             bound_check = {}
             for iv in self:
                 if iv.begin in bound_check:
@@ -1042,35 +756,19 @@ class IntervalTree(MutableSet):
                     bound_check[iv.end] += 1
                 else:
                     bound_check[iv.end] = 1
-
-            ## Reconstructed boundary table (bound_check) ==? boundary_table
-            assert set(self.boundary_table.keys()) == set(bound_check.keys()),\
-                'Error: boundary_table is out of sync with ' \
-                'the intervals in the tree!'
-
-            # For efficiency reasons this should be iteritems in Py2, but we
-            # don't care much for efficiency in debug methods anyway.
+            assert set(self.boundary_table.keys()) == set(bound_check.keys())
             for key, val in self.boundary_table.items():
-                assert bound_check[key] == val, \
-                    'Error: boundary_table[{0}] should be {1},' \
-                    ' but is {2}!'.format(
-                        key, bound_check[key], val)
-
-            ## Internal tree structure
+                assert bound_check[key] == val
             self.top_node.verify(set())
         else:
-            ## Verify empty tree
-            assert not self.boundary_table, \
-                "Error: boundary table should be empty!"
-            assert self.top_node is None, \
-                "Error: top_node isn't None!"
+            assert not self.boundary_table
+            assert self.top_node is None
 
+    @cython.ccall
     def score(self, full_report=False):
         """
         Returns a number between 0 and 1, indicating how suboptimal the tree
-        is. The lower, the better. Roughly, this number represents the
-        fraction of flawed Intervals in the tree.
-        :rtype: float
+        is.
         """
         if len(self) <= 2:
             return 0.0
@@ -1079,12 +777,6 @@ class IntervalTree(MutableSet):
         m = self.top_node.count_nodes()
 
         def s_center_score():
-            """
-            Returns a normalized score, indicating roughly how many times
-            intervals share s_center with other intervals. Output is full-scale
-            from 0 to 1.
-            :rtype: float
-            """
             raw = n - m
             maximum = n - 1
             return raw / float(maximum)
@@ -1099,17 +791,10 @@ class IntervalTree(MutableSet):
             return report
         return cumulative
 
-
     def __getitem__(self, index):
         """
         Returns a set of all intervals overlapping the given index or
         slice.
-
-        Completes in O(k * log(n) + m) time, where:
-          * n = size of the tree
-          * m = number of matches
-          * k = size of the search range (this is 1 for a point)
-        :rtype: set of Interval
         """
         try:
             start, stop = index.start, index.stop
@@ -1125,13 +810,7 @@ class IntervalTree(MutableSet):
 
     def __setitem__(self, index, value):
         """
-        Adds a new interval to the tree. A shortcut for
-        add(Interval(index.start, index.stop, value)).
-
-        If an identical Interval object with equal range and data
-        already exists, does nothing.
-
-        Completes in O(log n) time.
+        Adds a new interval to the tree.
         """
         self.addi(index.start, index.stop, value)
 
@@ -1144,34 +823,19 @@ class IntervalTree(MutableSet):
     def __contains__(self, item):
         """
         Returns whether item exists as an Interval in the tree.
-        This method only returns True for exact matches; for
-        overlaps, see the overlaps() method.
-
-        Completes in O(1) time.
-        :rtype: bool
         """
-        # Removed point-checking code; it might trick the user into
-        # thinking that this is O(1), which point-checking isn't.
-        #if isinstance(item, Interval):
         return item in self.all_intervals
-        #else:
-        #    return self.contains_point(item)
 
+    @cython.ccall
     def containsi(self, begin, end, data=None):
         """
         Shortcut for (Interval(begin, end, data) in tree).
-
-        Completes in O(1) time.
-        :rtype: bool
         """
         return Interval(begin, end, data) in self
 
     def __iter__(self):
         """
         Returns an iterator over all the intervals in the tree.
-
-        Completes in O(1) time.
-        :rtype: collections.Iterable[Interval]
         """
         return self.all_intervals.__iter__()
     iter = __iter__
@@ -1179,18 +843,12 @@ class IntervalTree(MutableSet):
     def __len__(self):
         """
         Returns how many intervals are in the tree.
-
-        Completes in O(1) time.
-        :rtype: int
         """
         return len(self.all_intervals)
 
     def __eq__(self, other):
         """
         Whether two IntervalTrees are equal.
-
-        Completes in O(n) time if sizes are equal; O(1) time otherwise.
-        :rtype: bool
         """
         return (
             isinstance(other, IntervalTree) and
@@ -1212,7 +870,5 @@ class IntervalTree(MutableSet):
     def __reduce__(self):
         """
         For pickle-ing.
-        :rtype: tuple
         """
         return IntervalTree, (sorted(self.all_intervals),)
-

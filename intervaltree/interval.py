@@ -23,16 +23,20 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 from numbers import Number
-from collections import namedtuple
+import cython
 
+@cython.cclass
+class Interval(object):
+    begin = cython.declare(object)
+    end = cython.declare(object)
+    data = cython.declare(object)
 
-# noinspection PyBroadException
-class Interval(namedtuple('IntervalBase', ['begin', 'end', 'data'])):
-    __slots__ = ()  # Saves memory, avoiding the need to create __dict__ for each interval
-
-    def __new__(cls, begin, end, data=None):
-        return super(Interval, cls).__new__(cls, begin, end, data)
+    def __init__(self, begin, end, data=None):
+        self.begin = begin
+        self.end = end
+        self.data = data
     
+    @cython.ccall
     def overlaps(self, begin, end=None):
         """
         Whether the interval overlaps the given point, range or Interval.
@@ -42,17 +46,13 @@ class Interval(namedtuple('IntervalBase', ['begin', 'end', 'data'])):
         :rtype: bool
         """
         if end is not None:
-            # An overlap means that some C exists that is inside both ranges:
-            #   begin <= C < end
-            # and 
-            #   self.begin <= C < self.end
-            # See https://stackoverflow.com/questions/3269434/whats-the-most-efficient-way-to-test-two-integer-ranges-for-overlap/3269471#3269471
             return begin < self.end and end > self.begin
         try:
             return self.overlaps(begin.begin, begin.end)
         except:
             return self.contains_point(begin)
 
+    @cython.ccall
     def overlap_size(self, begin, end=None):
         """
         Return the overlap size between two intervals or a point
@@ -76,6 +76,7 @@ class Interval(namedtuple('IntervalBase', ['begin', 'end', 'data'])):
         i1 = min(self.end, begin.end)
         return i1 - i0
 
+    @cython.ccall
     def contains_point(self, p):
         """
         Whether the Interval contains p.
@@ -85,6 +86,7 @@ class Interval(namedtuple('IntervalBase', ['begin', 'end', 'data'])):
         """
         return self.begin <= p < self.end
     
+    @cython.ccall
     def range_matches(self, other):
         """
         Whether the begins equal and the ends equal. Compare __eq__().
@@ -97,6 +99,7 @@ class Interval(namedtuple('IntervalBase', ['begin', 'end', 'data'])):
             self.end == other.end
         )
     
+    @cython.ccall
     def contains_interval(self, other):
         """
         Whether other is contained in this Interval.
@@ -109,6 +112,7 @@ class Interval(namedtuple('IntervalBase', ['begin', 'end', 'data'])):
             self.end >= other.end
         )
     
+    @cython.ccall
     def distance_to(self, other):
         """
         Returns the size of the gap between intervals, or 0 
@@ -130,6 +134,7 @@ class Interval(namedtuple('IntervalBase', ['begin', 'end', 'data'])):
             else:
                 return self.begin - other
 
+    @cython.ccall
     def is_null(self):
         """
         Whether this equals the null interval.
@@ -138,6 +143,7 @@ class Interval(namedtuple('IntervalBase', ['begin', 'end', 'data'])):
         """
         return self.begin >= self.end
 
+    @cython.ccall
     def length(self):
         """
         The distance covered by this Interval.
@@ -170,6 +176,16 @@ class Interval(namedtuple('IntervalBase', ['begin', 'end', 'data'])):
             self.data == other.data
         )
 
+    def __getitem__(self, i):
+        if i == 0:
+            return self.begin
+        elif i == 1:
+            return self.end
+        elif i == 2:
+            return self.data
+        else:
+            raise IndexError("Interval index out of range")
+
     def __cmp__(self, other):
         """
         Tells whether other sorts before, after or equal to this
@@ -183,9 +199,9 @@ class Interval(namedtuple('IntervalBase', ['begin', 'end', 'data'])):
         :return: -1, 0, 1
         :rtype: int
         """
-        s = self[0:2]
+        s = (self.begin, self.end)
         try:
-            o = other[0:2]
+            o = (other.begin, other.end)
         except:
             o = (other,)
         if s != o:
@@ -228,6 +244,7 @@ class Interval(namedtuple('IntervalBase', ['begin', 'end', 'data'])):
         if hasattr(other, 'is_null') and other.is_null():
             raise ValueError("Cannot compare null Intervals!")
 
+    @cython.ccall
     def lt(self, other):
         """
         Strictly less than. Returns True if no part of this Interval
@@ -240,6 +257,7 @@ class Interval(namedtuple('IntervalBase', ['begin', 'end', 'data'])):
         self._raise_if_null(other)
         return self.end <= getattr(other, 'begin', other)
 
+    @cython.ccall
     def le(self, other):
         """
         Less than or overlaps. Returns True if no part of this Interval
@@ -252,6 +270,7 @@ class Interval(namedtuple('IntervalBase', ['begin', 'end', 'data'])):
         self._raise_if_null(other)
         return self.end <= getattr(other, 'end', other)
 
+    @cython.ccall
     def gt(self, other):
         """
         Strictly greater than. Returns True if no part of this Interval
@@ -267,6 +286,7 @@ class Interval(namedtuple('IntervalBase', ['begin', 'end', 'data'])):
         else:
             return self.begin > other
 
+    @cython.ccall
     def ge(self, other):
         """
         Greater than or overlaps. Returns True if no part of this Interval

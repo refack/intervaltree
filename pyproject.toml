@@ -1,6 +1,6 @@
 [build-system]
-requires = ["uv_build>=0.8.24,<0.9.0"]
-build-backend = "uv_build"
+requires = ["setuptools>=61.0", "cython>=3.0.0"]
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "intervaltree"
@@ -60,20 +60,8 @@ Download = 'https://github.com/chaimleib/intervaltree/tarball/3.2.0'
 Issues = 'https://github.com/chaimleib/intervaltree/issues'
 
 [tool.pytest.ini_options]
-addopts = '--doctest-modules --doctest-glob=README.md --ignore=setup.py --ignore=*.pyc'
+addopts = '--doctest-glob=README.md --ignore=setup.py --ignore=*.pyc'
 norecursedirs = '*.egg* *doc* .* _* htmlcov scripts dist bin test/data'
 
 [tool.bdist_wheel]
 universal = true
-
-[tool.uv.build-backend]
-module-name = "intervaltree"
-module-root = ""
-
-[tool.setuptools]
-zip-safe = true
-include-package-data = true
-
-[tool.setuptools.packages.find]
-include = ['intervaltree*']
-
